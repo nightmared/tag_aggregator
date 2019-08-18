@@ -1,0 +1,15 @@
+[package]
+name = "tag-aggregator"
+version = "0.1.0"
+authors = ["Simon THOBY <git@nightmared.fr>"]
+edition = "2018"
+
+
+[dependencies]
+gtk = { version = "0.7.0", features = ["v3_16"] }
+glib = { version = "0.8.0" }
+gio = { version = "0.7.0", features = ["v2_44"] }
+serde = "1.0.99"
+serde_derive = "1.0.99"
+serde_json = "1.0.40"
+dbus = "0.6.5"
