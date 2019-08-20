@@ -9,11 +9,12 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-use std::sync::mpsc::{Sender, Receiver, channel};
+use std::sync::mpsc;
+use std::process::{Command, Stdio};
 
 use gtk::prelude::*;
 use gio::prelude::*;
-use gtk::{Application, ApplicationWindow, TreeView, TreeViewColumnBuilder, TreeStore};
+use gtk::{Application, ApplicationWindow, TreeView, TreeViewColumn, TreeStore, CellRendererText};
 use gtk::Type;
 
 use serde_derive::{Serialize, Deserialize};
@@ -32,7 +33,7 @@ struct InternalData {
     tree: HashMap<String, Vec<Entry>>
 }
 
-fn add_entry(msg: &dbus::Message, data: &Mutex<InternalData>, category: String, title: String, url: String, tx: &Mutex<Sender<()>>) -> dbus::tree::MethodResult {
+fn add_entry(msg: &dbus::Message, data: &Mutex<InternalData>, category: String, title: String, url: String, tx: &Mutex<mpsc::Sender<()>>) -> dbus::tree::MethodResult {
     match data.lock() {
         Ok(mut id) => {
             match id.tree.get_mut(&category) {
@@ -62,55 +63,87 @@ fn on_update(data: Arc<Mutex<InternalData>>, store: TreeStore, view: TreeView) {
     view.show_all();
 }
 
-fn gtk_handler(data: Arc<Mutex<InternalData>>, rx: Receiver<()>) {
-    let app = Application::new(Some("fr.nightmared.tag_aggregator.gtk"), Default::default()).expect("starting the gtk application failed");
-    let (itx, irx) = channel();
-    app.connect_activate(move |app| {
+fn on_click(view: &TreeView, path: &gtk::TreePath, col_view: &TreeViewColumn) {
+    if col_view.get_name() == Some("url_col".into()) {
+        if let Some((model, _)) = view.get_selection().get_selected() {
+            if let Some(iter) = model.get_iter(path) {
+                if let Some(url) = model.get_value(&iter, 1).get::<String>() {
+                    if url.starts_with("file://") || url.starts_with("http://") || url.starts_with("https://") {
+                        Command::new("xdg-open")
+                            .arg(url)
+                            .stdout(Stdio::null())
+                            .stdin(Stdio::null())
+                            .stderr(Stdio::null())
+                            .spawn()
+                            .expect("Couldn't spawn xdg-open");
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+fn gtk_handler(data: Arc<Mutex<InternalData>>, itx: mpsc::Sender<glib::Sender<()>>) -> impl Fn(&Application) {
+    move |app| {
         let win = ApplicationWindow::new(app);
         win.set_title("Tab Aggregator");
 
+        let sw = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
+        //sw.set_shadow_type(gtk::ShadowType::EtchedIn);
+        sw.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+
         let tree = TreeStore::new(&[Type::String, Type::String]);
+
+        let treeview = TreeView::new_with_model(&tree);
+        treeview.set_vexpand(true);
+        treeview.set_reorderable(true);
+        treeview.set_activate_on_single_click(true);
+
+        let col_name_renderer = CellRendererText::new();
+        let col_name_view = TreeViewColumn::new();
+        col_name_view.pack_start(&col_name_renderer, true);
+        col_name_view.set_title("Name");
+        col_name_view.add_attribute(&col_name_renderer, "text", 0);
+
+        treeview.append_column(&col_name_view);
+
+        let col_url_renderer = CellRendererText::new();
+        let col_url_view = TreeViewColumn::new();
+        col_url_view.pack_start(&col_url_renderer, true);
+        col_url_view.set_title("Url");
+        col_url_view.set_name("url_col");
+        col_url_view.add_attribute(&col_url_renderer, "text", 1);
+        col_url_renderer.set_property_foreground(Some(&"blue"));
+        col_url_renderer.set_property_underline(pango::Underline::Single);
+
+        treeview.connect_row_activated(on_click);
+
+        treeview.append_column(&col_url_view);
+
         let _default = tree.append(None);
+        tree.set(&_default, &[0, 1], &[&"Main", &"lol"]);
+
+        sw.add(&treeview);
+
+        win.add(&sw);
 
         let (gtx, grx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
         let itx = itx.clone();
-        thread::spawn(move || {
-            itx.send(gtx).unwrap();
-        });
-
-        let treeview = TreeView::new_with_model(&tree);
-        treeview.append_column(&TreeViewColumnBuilder::new().title("Name").build());
-        treeview.append_column(&TreeViewColumnBuilder::new().title("URL").build());
-
-        win.add(&treeview);
+        itx.send(gtx).unwrap();
 
         let data = data.clone();
         grx.attach(None, move |_| {
-            let data = data.clone();
-            let tree = tree.clone();
-            let treeview  = treeview.clone();
-            on_update(data, tree, treeview);
+            on_update(data.clone(), tree.clone(), treeview.clone());
             gtk::Continue(true)
         });
         
 
         win.show_all();
-    });
-    thread::spawn(move || {
-        let tx = irx.recv().unwrap();
-        loop {
-            if let Ok(()) = rx.recv() {
-                tx.send(()).unwrap();
-            }
-        }
-    });
-
-
-
-    app.run(&[]);
+    }
 }
 
-fn dbus_client(data: Arc<Mutex<InternalData>>, tx: Sender<()>) -> Result<(), dbus::Error> {
+fn dbus_client(data: Arc<Mutex<InternalData>>, tx: mpsc::Sender<()>) -> Result<(), dbus::Error> {
     let data2 = data.clone();
     let tx = Arc::new(Mutex::new(tx));
     let tx2 = tx.clone();
@@ -162,14 +195,27 @@ fn main() -> std::io::Result<()> {
 
 
     let data = Arc::new(Mutex::new(conf));
-    let (tx, rx) = channel();
+    let (tx, rx) = mpsc::channel();
 
     let dbus_client_data = data.clone();
     thread::spawn(move || dbus_client(dbus_client_data, tx));
 
-    let gtk_app_data = data.clone();
-    gtk_handler(gtk_app_data, rx);
+    let app = Application::new(Some("fr.nightmared.tag_aggregator.gtk"), Default::default()).expect("starting the gtk application failed");
 
-    
+    // temporary handles that allows the gtk thread to send a glib channel to the "proxy" thread
+    // that forwards update messages to the UI
+    let (itx, irx) = mpsc::channel();
+    app.connect_activate(gtk_handler(data, itx));
+    thread::spawn(move || {
+        let tx = irx.recv().expect("Couldn't obtain a handle to notify the Gtk+ thread");
+        drop(irx);
+        loop {
+            if let Ok(()) = rx.recv() {
+                tx.send(()).expect("Couldn't notify the Gtk+ thread to update its dataset");
+            }
+        }
+    });
+
+    app.run(&[]);
     Ok(())
 }
