@@ -30,20 +30,19 @@ struct Entry {
 #[derive(Serialize, Deserialize, Debug)]
 struct InternalData {
     #[serde(flatten)]
-    tree: HashMap<String, Vec<Entry>>
+    tree: HashMap<String, Vec<Entry>>,
+    #[serde(skip)]
+    sender: Option<glib::Sender<()>>
 }
 
-fn add_entry(msg: &dbus::Message, data: &Mutex<InternalData>, category: String, title: String, url: String, tx: &Mutex<mpsc::Sender<()>>) -> dbus::tree::MethodResult {
+fn add_entry(msg: &dbus::Message, data: &Mutex<InternalData>, category: String, title: String, url: String) -> dbus::tree::MethodResult {
     match data.lock() {
         Ok(mut id) => {
             match id.tree.get_mut(&category) {
                 Some(x) => x.push(Entry { name: title, url }),
                 None => { id.tree.insert("default".into(), vec![Entry { name: title, url }]); }
             };
-            match tx.lock() {
-                Ok(x) => x.send(()).expect("Message sending failed"),
-                Err(_) => return Ok(vec!(msg.method_return().append1(false)))
-            };
+            id.sender.as_ref().unwrap().send(()).expect("Message sending failed");
             Ok(vec!(msg.method_return().append1(true)))
         },
         // A thread panicked while holding a mutex
@@ -143,10 +142,12 @@ fn gtk_handler(data: Arc<Mutex<InternalData>>, itx: mpsc::Sender<glib::Sender<()
     }
 }
 
-fn dbus_client(data: Arc<Mutex<InternalData>>, tx: mpsc::Sender<()>) -> Result<(), dbus::Error> {
+fn dbus_client(data: Arc<Mutex<InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
     let data2 = data.clone();
-    let tx = Arc::new(Mutex::new(tx));
-    let tx2 = tx.clone();
+    {
+        let mut id =  data.lock().expect("Couldn't acquire the mutex. Starvation ?");
+        id.sender = Some(rx.recv().expect("Couldn't obtain the IPC channel"));
+    }
     let c = Connection::get_private(BusType::Session)?;
     c.register_name("fr.nightmared.tag_aggregator", NameFlag::ReplaceExisting as u32)?;
     let f = Factory::new_sync::<()>();
@@ -154,14 +155,14 @@ fn dbus_client(data: Arc<Mutex<InternalData>>, tx: mpsc::Sender<()>) -> Result<(
         f.interface("fr.nightmared.tag_aggregator", ()).add_m(
             f.method_sync("add", (), move |m| {
                 let (title, url): (String, String) = m.msg.read2()?;
-                add_entry(m.msg, &data, "default".into(), title, url, &tx)
+                add_entry(m.msg, &data, "default".into(), title, url)
             }).inarg::<String, _>("title")
               .inarg::<String, _>("url")
               .outarg::<bool,_>("success")
         ).add_m(
             f.method_sync("add_with_category", (), move |m| {
                 let (category, title, url): (String, String, String) = m.msg.read3()?;
-                add_entry(m.msg, &data2, category, title, url, &tx2)
+                add_entry(m.msg, &data2, category, title, url)
             }).inarg::<String, _>("category")
               .inarg::<String, _>("title")
               .inarg::<String, _>("url")
@@ -198,23 +199,11 @@ fn main() -> std::io::Result<()> {
     let (tx, rx) = mpsc::channel();
 
     let dbus_client_data = data.clone();
-    thread::spawn(move || dbus_client(dbus_client_data, tx));
+    thread::spawn(move || dbus_client(dbus_client_data, rx));
 
     let app = Application::new(Some("fr.nightmared.tag_aggregator.gtk"), Default::default()).expect("starting the gtk application failed");
 
-    // temporary handles that allows the gtk thread to send a glib channel to the "proxy" thread
-    // that forwards update messages to the UI
-    let (itx, irx) = mpsc::channel();
-    app.connect_activate(gtk_handler(data, itx));
-    thread::spawn(move || {
-        let tx = irx.recv().expect("Couldn't obtain a handle to notify the Gtk+ thread");
-        drop(irx);
-        loop {
-            if let Ok(()) = rx.recv() {
-                tx.send(()).expect("Couldn't notify the Gtk+ thread to update its dataset");
-            }
-        }
-    });
+    app.connect_activate(gtk_handler(data, tx));
 
     app.run(&[]);
     Ok(())
