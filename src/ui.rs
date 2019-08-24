@@ -1,6 +1,3 @@
-extern crate gtk;
-extern crate gio;
-
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, Arc};
 use std::sync::mpsc;
@@ -66,6 +63,7 @@ fn gtk_handler(data: Arc<Mutex<lib::InternalData>>, itx: mpsc::Sender<glib::Send
         col_name_view.pack_start(&col_name_renderer, true);
         col_name_view.set_title("Name");
         col_name_view.add_attribute(&col_name_renderer, "text", 0);
+        col_name_view.set_resizable(true);
 
         treeview.append_column(&col_name_view);
 
@@ -83,7 +81,7 @@ fn gtk_handler(data: Arc<Mutex<lib::InternalData>>, itx: mpsc::Sender<glib::Send
         treeview.append_column(&col_url_view);
 
         let _default = tree.append(None);
-        tree.set(&_default, &[0, 1], &[&"Main", &"lol"]);
+        tree.set_value(&_default, 0, &"Default category".to_value());
 
         sw.add(&treeview);
 
@@ -104,10 +102,10 @@ fn gtk_handler(data: Arc<Mutex<lib::InternalData>>, itx: mpsc::Sender<glib::Send
     }
 }
 
-pub(crate) fn run_ui(data: Arc<Mutex<lib::InternalData>>, tx: mpsc::Sender<glib::Sender<()>>) {
+pub(crate) fn run_ui(data: &Arc<Mutex<lib::InternalData>>, tx: mpsc::Sender<glib::Sender<()>>) {
     let app = Application::new(Some("fr.nightmared.tag_aggregator.gtk"), Default::default()).expect("starting the gtk application failed");
 
-    app.connect_activate(gtk_handler(data, tx));
+    app.connect_activate(gtk_handler(data.clone(), tx));
 
     app.run(&[]);
 }

@@ -1,3 +1,4 @@
+use std::thread;
 use std::sync::{Mutex, Arc};
 use std::sync::mpsc;
 
@@ -21,7 +22,7 @@ fn add_entry(msg: &dbus::Message, data: &Mutex<lib::InternalData>, category: Str
     }
 }
 
-pub(crate) fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
+fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
     let data2 = data.clone();
     {
         let mut id =  data.lock().expect("Couldn't acquire the mutex. Starvation ?");
@@ -51,7 +52,10 @@ pub(crate) fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receive
     tree.set_registered(&c, true)?;
     c.add_handler(tree);
     loop { c.incoming(1000).next(); }
+}
 
-
+pub(crate) fn run_dbus(data: &Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) {
+    let data = data.clone();
+    thread::spawn(move || dbus_client(data, rx));
 }
 
