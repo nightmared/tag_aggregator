@@ -1,4 +1,5 @@
 use std::{fmt, thread};
+use std::sync::{Arc, Mutex};
 
 use curl::easy::Easy;
 
@@ -45,10 +46,16 @@ impl serde::Serialize for Connection {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct ServerConfig {
+pub(crate) struct ServerConfig {
     conn: Connection,
     data_storage: String
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ClientConfig {
+    conn: Connection
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ServerData {
@@ -74,9 +81,18 @@ fn retrieve<T: for <'a> serde::Deserialize<'a>>(conn: Connection) -> Result<T, l
     Ok(serde_json::from_slice::<T>(&buf)?)
 }
 
-pub(crate) fn run_server_client(conn: Connection) {
+fn dbus_web_client(data: Arc<Mutex<lib::InternalData>>, conn: Connection) -> Result<(), dbus::Error> {
+    let c = dbus::Connection::get_private(dbus::BusType::Session)?;
+
+    retrieve(conn);
+
+    Ok(())
+}
+
+pub(crate) fn run_web_client(data: &Arc<Mutex<lib::InternalData>>, conf: ClientConfig) {
+    let data = data.clone();
     thread::spawn(move || {
         // connect to the dbus server
-
+        dbus_web_client(data, conf.conn).unwrap();
     });
 }

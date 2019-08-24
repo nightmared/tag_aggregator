@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-pub(crate) fn load_config<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
+pub(crate) fn load_app_data<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
     let config_base_dir = env::var_os("XDG_CONFIG_HOME")
         .unwrap_or(env::var_os("HOME")
             .unwrap_or(env::current_dir()

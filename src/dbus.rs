@@ -56,6 +56,6 @@ fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sen
 
 pub(crate) fn run_dbus(data: &Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) {
     let data = data.clone();
-    thread::spawn(move || dbus_client(data, rx));
+    thread::spawn(move || dbus_client(data, rx).unwrap());
 }
 
