@@ -2,14 +2,18 @@ use std::collections::HashMap;
 
 use serde_derive::{Serialize, Deserialize};
 
-pub(crate) type Tree = HashMap<String, Vec<Entry>>;
+pub(crate) type Category = String;
+pub(crate) type Tree = HashMap<Category, Vec<Entry>>;
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct InternalData {
     #[serde(flatten)]
     pub tree: Tree,
     #[serde(skip)]
-    pub sender: Option<glib::Sender<()>>
+    pub sender: Option<glib::Sender<()>>,
+    #[serde(default = None)]
+    pub pos: Option<u64>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -20,14 +24,21 @@ pub(crate) struct Entry {
 
 #[derive(Debug)]
 pub(crate) enum Error {
-    CurlError(curl::Error),
+    DbusError(dbus::Error),
+	DbusTypeCastingError(dbus::arg::TypeMismatchError),
     SerialisationError(serde_json::Error),
     IOError(std::io::Error)
 }
 
-impl From<curl::Error> for Error {
-    fn from(e: curl::Error) -> Self {
-        Error::CurlError(e)
+impl From<dbus::Error> for Error {
+    fn from(e: dbus::Error) -> Self {
+        Error::DbusError(e)
+    }
+}
+
+impl From<dbus::arg::TypeMismatchError> for Error {
+    fn from(e: dbus::arg::TypeMismatchError) -> Self {
+        Error::DbusTypeCastingError(e)
     }
 }
 

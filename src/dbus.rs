@@ -24,6 +24,8 @@ fn add_entry(msg: &dbus::Message, data: &Mutex<lib::InternalData>, category: Str
 
 fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
     let data2 = data.clone();
+    let data3 = data.clone();
+    let data4 = data.clone();
     {
         let mut id =  data.lock().expect("Couldn't acquire the mutex. Starvation ?");
         id.sender = Some(rx.recv().expect("Couldn't obtain the IPC channel"));
@@ -33,6 +35,21 @@ fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sen
     let f = Factory::new_sync::<()>();
     let tree = f.tree(()).add(f.object_path("/fr/nightmared/tag_aggregator", ()).introspectable().add(
         f.interface("fr.nightmared.tag_aggregator", ()).add_m(
+            f.method_sync("get_version", (), move |m| {
+                let id = data3.lock().expect("Couldn't lock a mutex !");
+                Ok(vec![m.msg.method_return().append1(id.pos.unwrap_or(0))])
+            }).outarg::<u64,_>("version")
+        ).add_m(
+            f.method_sync("set_version", (), move |m| {
+                let mut id = data4.lock().expect("Couldn't lock a mutex !");
+                let new_version = m.msg.read1()?;
+                if new_version > id.pos.unwrap_or(0) {
+                    id.pos = Some(new_version);
+                }
+                Ok(vec![m.msg.method_return().append1(true)])
+            }).inarg::<u64,_>("version")
+              .outarg::<bool,_>("succes")
+        ).add_m(
             f.method_sync("add", (), move |m| {
                 let (title, url): (String, String) = m.msg.read2()?;
                 add_entry(m.msg, &data, "default".into(), title, url)
