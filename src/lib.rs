@@ -53,3 +53,12 @@ impl From<std::io::Error> for Error {
         Error::IOError(e)
     }
 }
+
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> std::io::Error {
+        match e {
+            Error::IOError(e) => e,
+            _ => std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))
+        }
+    }
+}

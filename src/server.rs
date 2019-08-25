@@ -1,23 +1,51 @@
 use std::thread;
-use std::io::Read;
-use std::time::Duration;
-use mio::net::TcpStream;
-use mio::{Poll, PollOpt, Token, Events, Ready};
+use std::convert::TryFrom;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, Arc};
+
+use futures::{future, Async, Future, Stream};
 
 use serde_derive::{Serialize, Deserialize};
+use hyper::{Body, Request, Response, Server};
+use hyper::service::service_fn;
 
-use crate::lib;
+use crate::{lib, utils};
 
-#[derive(Serialize, Deserialize, Debug)]
-struct ServerData {
-    trees: Vec<(u64, lib::Tree)>
-}
+type ServerTree = Vec<(u64, lib::Tree)>;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct Connection {
     server_name: String,
     port: u16
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ServerState {
+    updated: Arc<AtomicBool>,
+    data: Arc<Mutex<ServerTree>>
+}
+
+impl ServerState {
+    fn new(tree: ServerTree) -> Self {
+        ServerState {
+            updated: Arc::new(AtomicBool::new(false)),
+            data: Arc::new(Mutex::new(tree))
+        }
+    }
+}
+
+impl Stream for ServerState {
+    type Item = Vec<u8>;
+    type Error = std::io::Error;
+
+    fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
+        if self.updated.load(Ordering::Acquire) {
+            let serv_data = self.data.lock().expect("Mutex starvation !");
+            return Ok(Async::Ready(Some(serde_json::to_vec(&serv_data[serv_data.len()-1])?)))
+        }
+        Ok(Async::NotReady)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -31,21 +59,37 @@ pub(crate) struct ClientConfig {
     conn: Connection
 }
 
-fn get_stream(conn: &Connection) -> Result<TcpStream, lib::Error> {
-    let stream = TcpStream::connect(
-        &(conn.server_name.as_str(), conn.port)
-            .to_socket_addrs()?
-            .next().expect("No matching server name found, check your config and you DNS resolution")
-        )?;
-    stream.set_keepalive(Some(Duration::new(5, 0)))?;
-    Ok(stream)
+
+impl TryFrom<&Connection> for std::net::SocketAddr {
+    type Error = lib::Error;
+
+    fn try_from(conn: &Connection) -> Result<Self, lib::Error> {
+        Ok((conn.server_name.as_str(), conn.port)
+                .to_socket_addrs()?
+                .next().expect("No matching server name found, check your config and you DNS resolution"))
+    }
 }
 
-fn send_to_dbus_server(conn: &dbus::ConnPath<&dbus::Connection>, serv_data: ServerData) -> Result<(), lib::Error> {
+fn server_main(data: ServerState) -> impl Fn(Request<Body>) -> Box<dyn Future<Item=Response<Body>, Error=hyper::Error> + Send> {
+    move |req| {
+        Box::new(future::ok(Response::builder()
+                .body(Body::wrap_stream(data.clone())).unwrap()))
+    }
+}
+
+fn tcp_server(conf: ServerConfig, data: ServerState) -> Result<(), lib::Error> {
+    let server = Server::bind(&std::net::SocketAddr::try_from(&conf.conn)?)
+        .serve(move || service_fn(server_main(data.clone())))
+        .map_err(|_|{});
+    hyper::rt::run(server);
+    Ok(())
+}
+
+fn send_to_dbus_server(conn: &dbus::ConnPath<&dbus::Connection>, serv_data: ServerTree) -> Result<(), lib::Error> {
     let interface = "fr.nightmared.tag_aggregator".into();
     let cur_version = conn.method_call_with_args(&interface, &"get_version".into(), |_|{})?.read1()?;
 
-    for (version, tree) in serv_data.trees {
+    for (version, tree) in serv_data {
         if version <= cur_version {
             continue;
         }
@@ -66,8 +110,8 @@ fn send_to_dbus_server(conn: &dbus::ConnPath<&dbus::Connection>, serv_data: Serv
     }
     Ok(())
 }
-
-fn dbus_web_client(conn: Connection) -> Result<(), lib::Error> {
+/*
+fn tcp_client(conn: Connection) -> Result<(), lib::Error> {
     let mut stream = get_stream(&conn)?;
 
     let poll = Poll::new()?;
@@ -88,7 +132,8 @@ fn dbus_web_client(conn: Connection) -> Result<(), lib::Error> {
             if event.token() == Token(0) {
                 loop{
                     if let Err(e) = stream.read_to_end(&mut buf) {
-                        if e.kind() == std::io::ErrorKind::ConnectionAborted
+                        if mio::unix::UnixReady::from(event.readiness()).is_hup()
+                            || e.kind() == std::io::ErrorKind::ConnectionAborted
                             || e.kind() == std::io::ErrorKind::ConnectionReset {
 
                             // reset the connection and start again
@@ -113,10 +158,18 @@ fn dbus_web_client(conn: Connection) -> Result<(), lib::Error> {
         }
     }
 }
+*/
 
+pub(crate) fn run_web_server(config: ServerConfig) {
+    let data = utils::load_app_data("server_data.json").expect("Could not open the server_data.json file");
+    tcp_server(config, ServerState::new(data));
+}
+
+/*
 pub(crate) fn run_web_client(conf: ClientConfig) {
     thread::spawn(move || {
         // connect to the dbus server
-        dbus_web_client(conf.conn).unwrap();
+        tcp_client(conf.conn).unwrap();
     });
 }
+*/
