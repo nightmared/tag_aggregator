@@ -1,4 +1,5 @@
 use std::thread;
+use std::str::FromStr;
 use std::convert::TryFrom;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,15 +8,18 @@ use std::sync::{Mutex, Arc};
 use futures::{future, Async, Future, Stream};
 
 use serde_derive::{Serialize, Deserialize};
-use hyper::{Body, Request, Response, Server};
+use hyper::{Client, Body, Request, Response, Server};
 use hyper::service::service_fn;
 
 use crate::{lib, utils};
 
-type ServerTree = Vec<(u64, lib::Tree)>;
+type ServerVersion = u64;
+type MessageSize = u64;
+type ServerTree = Vec<(ServerVersion, lib::Tree)>;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub(crate) struct Connection {
+    use_tls: bool,
     server_name: String,
     port: u16
 }
@@ -40,9 +44,13 @@ impl Stream for ServerState {
     type Error = std::io::Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
-        if self.updated.load(Ordering::Acquire) {
+        if self.updated.compare_and_swap(true, false, Ordering::AcqRel) {
             let serv_data = self.data.lock().expect("Mutex starvation !");
-            return Ok(Async::Ready(Some(serde_json::to_vec(&serv_data[serv_data.len()-1])?)))
+            let mut tmp = serde_json::to_vec(&serv_data[serv_data.len()-1])?;
+            let size = (tmp.len() as MessageSize).to_be_bytes();
+            let mut data: Vec<u8> = Vec::from(&size as &[u8]);
+            data.append(&mut tmp);
+            return Ok(Async::Ready(Some(data)))
         }
         Ok(Async::NotReady)
     }
@@ -52,11 +60,6 @@ impl Stream for ServerState {
 pub(crate) struct ServerConfig {
     conn: Connection,
     data_storage: String
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct ClientConfig {
-    conn: Connection
 }
 
 
@@ -110,66 +113,40 @@ fn send_to_dbus_server(conn: &dbus::ConnPath<&dbus::Connection>, serv_data: Serv
     }
     Ok(())
 }
-/*
-fn tcp_client(conn: Connection) -> Result<(), lib::Error> {
-    let mut stream = get_stream(&conn)?;
-
-    let poll = Poll::new()?;
-    let mut events = Events::with_capacity(2);
-
-    poll.register(&stream, Token(0), Ready::readable() | mio::unix::UnixReady::hup(), PollOpt::edge())?;
-
-    let mut data = Vec::new();
-    let mut buf = Vec::new();
-
-    let dbus_conn = dbus::Connection::get_private(dbus::BusType::Session)?;
-    let dbus_path = dbus_conn.with_path("fr.nightmared.tag_aggregator", "/fr/nightmared/tag_aggregator", 500);
-
-    loop {
-        poll.poll(&mut events, None)?;
-
-        for event in &events {
-            if event.token() == Token(0) {
-                loop{
-                    if let Err(e) = stream.read_to_end(&mut buf) {
-                        if mio::unix::UnixReady::from(event.readiness()).is_hup()
-                            || e.kind() == std::io::ErrorKind::ConnectionAborted
-                            || e.kind() == std::io::ErrorKind::ConnectionReset {
-
-                            // reset the connection and start again
-                            poll.deregister(&stream)?;
-                            stream.shutdown(std::net::Shutdown::Both)?;
-                            stream = get_stream(&conn)?;
-                            poll.register(&stream, Token(0), Ready::readable() | mio::unix::UnixReady::hup(), PollOpt::edge())?;
-                            if let Ok(serv_data) = serde_json::from_slice::<ServerData>(&data) {
-                                // send server_data
-                                send_to_dbus_server(&dbus_path, serv_data)?;
-                                break;
-                            }
-                            data.clear();
-                            break;
-                        }
-                    } else {
-                        data.append(&mut buf);
-                    }
-                }
-            }
-
-        }
-    }
-}
-*/
 
 pub(crate) fn run_web_server(config: ServerConfig) {
     let data = utils::load_app_data("server_data.json").expect("Could not open the server_data.json file");
     tcp_server(config, ServerState::new(data));
 }
 
-/*
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct ClientConfig {
+    conn: Connection
+}
+
+fn web_client(conn: Connection) -> Result<(), lib::Error> {
+    let dbus_conn = dbus::Connection::get_private(dbus::BusType::Session)?;
+    let dbus_path = dbus_conn.with_path("fr.nightmared.tag_aggregator", "/fr/nightmared/tag_aggregator", 500);
+
+    let client = Client::new();
+    let server_url = format!("http{}://{}:{}", if conn.use_tls { "s" } else { "" }, conn.server_name, conn.port);
+    let fut = client
+        .get(hyper::Uri::from_str(&server_url).unwrap())
+        .and_then(|res| {
+            res.into_body().concat2()
+        })
+        .and_then(|body| {
+            Ok(())
+        })
+        .map_err(|_| {
+        });
+    hyper::rt::spawn(fut);
+    unimplemented!()
+}
+
 pub(crate) fn run_web_client(conf: ClientConfig) {
     thread::spawn(move || {
         // connect to the dbus server
-        tcp_client(conf.conn).unwrap();
+        web_client(conf.conn).unwrap();
     });
 }
-*/

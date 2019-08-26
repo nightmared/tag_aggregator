@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
 
     let (tx, rx) = mpsc::channel();
     dbus::run_dbus(&data, rx);
-    //server::run_web_client(conf);
+    server::run_web_client(conf);
     ui::run_ui(&data, tx);
     Ok(())
 }
