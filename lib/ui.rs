@@ -7,9 +7,7 @@ use gio::prelude::*;
 use gtk::{Application, ApplicationWindow, TreeView, TreeViewColumn, TreeStore, CellRendererText};
 use gtk::Type;
 
-use crate::lib;
-
-fn on_update(data: Arc<Mutex<lib::InternalData>>, store: TreeStore, view: TreeView) {
+fn on_update(data: Arc<Mutex<crate::InternalData>>, store: TreeStore, view: TreeView) {
     let data_locked = data.lock().expect("Mutex starvation !");
     for key in data_locked.tree.keys() {
         let default = store.get_iter_first().unwrap();
@@ -42,7 +40,7 @@ fn on_click(view: &TreeView, path: &gtk::TreePath, col_view: &TreeViewColumn) {
     }
 }
 
-fn gtk_handler(data: Arc<Mutex<lib::InternalData>>, itx: mpsc::Sender<glib::Sender<()>>) -> impl Fn(&Application) {
+fn gtk_handler(data: Arc<Mutex<crate::InternalData>>, itx: mpsc::Sender<glib::Sender<()>>) -> impl Fn(&Application) {
     move |app| {
         let win = ApplicationWindow::new(app);
         win.set_title("Tab Aggregator");
@@ -102,7 +100,7 @@ fn gtk_handler(data: Arc<Mutex<lib::InternalData>>, itx: mpsc::Sender<glib::Send
     }
 }
 
-pub(crate) fn run_ui(data: &Arc<Mutex<lib::InternalData>>, tx: mpsc::Sender<glib::Sender<()>>) {
+pub fn run_ui(data: &Arc<Mutex<crate::InternalData>>, tx: mpsc::Sender<glib::Sender<()>>) {
     let app = Application::new(Some("fr.nightmared.tag_aggregator.gtk"), Default::default()).expect("starting the gtk application failed");
 
     app.connect_activate(gtk_handler(data.clone(), tx));

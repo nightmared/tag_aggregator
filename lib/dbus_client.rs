@@ -4,10 +4,9 @@ use std::sync::mpsc;
 
 use dbus::{Connection, BusType, NameFlag, tree::Factory};
 
-use crate::lib;
-use lib::Entry;
+use crate::Entry;
 
-fn add_entry(msg: &dbus::Message, data: &Mutex<lib::InternalData>, category: String, title: String, url: String) -> dbus::tree::MethodResult {
+fn add_entry(msg: &dbus::Message, data: &Mutex<crate::InternalData>, category: String, title: String, url: String) -> dbus::tree::MethodResult {
     match data.lock() {
         Ok(mut id) => {
             match id.tree.get_mut(&category) {
@@ -22,7 +21,7 @@ fn add_entry(msg: &dbus::Message, data: &Mutex<lib::InternalData>, category: Str
     }
 }
 
-fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
+fn dbus_client(data: Arc<Mutex<crate::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) -> Result<(), dbus::Error> {
     let data2 = data.clone();
     let data3 = data.clone();
     let data4 = data.clone();
@@ -71,7 +70,7 @@ fn dbus_client(data: Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sen
     loop { c.incoming(1000).next(); }
 }
 
-pub(crate) fn run_dbus(data: &Arc<Mutex<lib::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) {
+pub fn run_dbus(data: &Arc<Mutex<crate::InternalData>>, rx: mpsc::Receiver<glib::Sender<()>>) {
     let data = data.clone();
     thread::spawn(move || dbus_client(data, rx).unwrap());
 }

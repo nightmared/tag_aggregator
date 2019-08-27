@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-pub(crate) fn load_app_data<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
+pub fn load_app_data<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
     let config_base_dir = env::var_os("XDG_CONFIG_HOME")
         .unwrap_or(env::var_os("HOME")
             .unwrap_or(env::current_dir()
@@ -18,7 +18,7 @@ pub(crate) fn load_app_data<T: for <'a> Deserialize<'a>>(file_name: &str) -> std
     load_json(&config_file_path.to_string_lossy())
 }
 
-pub(crate) fn load_json<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
+pub fn load_json<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::Result<T> {
     let mut fs = File::open(file_name).map_err(|e| {
         eprintln!("Unable to open the file '{}'.", file_name);
         e
