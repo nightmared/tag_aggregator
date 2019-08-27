@@ -1,3 +1,4 @@
+#![feature(proc_macro_hygiene)]
 use std::collections::HashMap;
 
 use serde_derive::{Serialize, Deserialize};
@@ -72,5 +73,15 @@ impl From<Error> for std::io::Error {
 impl From<hyper::Error> for Error {
     fn from(e: hyper::Error) -> Self {
         Error::HyperError(e)
+    }
+}
+
+impl From<Error> for hyper::Error {
+    fn from(e: Error) -> hyper::Error {
+        if let Error::HyperError(e) = e {
+            e
+        } else {
+            panic!("Invalid error")
+        }
     }
 }

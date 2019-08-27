@@ -1,0 +1,29 @@
+[package]
+name = "libtag_aggregator"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+
+# GUI
+gtk = { version = "0.7.0", features = ["v3_16"] }
+glib = "0.8.0"
+gio = { version = "0.7.0", features = ["v2_44"] }
+pango = "0.7.0"
+
+# JSON serialization
+serde = "1.0.99"
+serde_derive = "1.0.99"
+serde_json = "1.0.40"
+
+# IPC
+dbus = "0.6.5"
+
+# HTTP mess
+hyper = "0.12.33"
+futures = "0.1.28"
+tokio-codec = "0.1.1"
+bytes = "0.4.12"
+tokio-io = "0.1.12"
+
+macro_hack = { path = "../macro-hack" }

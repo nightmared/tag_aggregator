@@ -7,14 +7,13 @@ use std::sync::{RwLock, Arc};
 
 use futures::{future, Async, Future, Stream};
 use serde_derive::{Serialize, Deserialize};
-use hyper::{Client, Body, Request, Response, Server};
+use hyper::{Client, Body, Request, Response, Server, Method};
 use hyper::body::Payload;
 use hyper::service::service_fn;
 use bytes::{BytesMut, Buf, BufMut, IntoBuf};
 use tokio_codec::{Encoder, Decoder};
-use tokio_io::AsyncRead;
 
-use crate::utils;
+use macro_hack::try_future;
 
 type ServerVersion = u64;
 type ServerTree = Vec<(ServerVersion, crate::Tree)>;
@@ -71,10 +70,10 @@ pub struct ServerState {
 }
 
 impl ServerState {
-    fn new(tree: ServerTree) -> Self {
+    fn new(tree: Arc<RwLock<ServerTree>>) -> Self {
         ServerState {
             updated: Arc::new(AtomicBool::new(false)),
-            data: Arc::new(RwLock::new(tree))
+            data: tree
         }
     }
 }
@@ -97,8 +96,7 @@ impl Stream for ServerState {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ServerConfig {
-    conn: Connection,
-    data_storage: String
+    conn: Connection
 }
 
 
@@ -112,14 +110,43 @@ impl TryFrom<&Connection> for std::net::SocketAddr {
     }
 }
 
+
 fn server_main(data: ServerState) -> impl Fn(Request<Body>) -> Box<dyn Future<Item=Response<Body>, Error=hyper::Error> + Send> {
     move |req| {
-        Box::new(future::ok(Response::builder()
-                .body(Body::wrap_stream(data.clone())).unwrap()))
+		match (req.method(), req.uri().path()) {
+			(&Method::GET, "/data.json") => {
+				Box::new(future::ok(Response::builder()
+                	.body(Body::wrap_stream(data.clone())).unwrap()))
+			},
+			(&Method::POST, "/add_entry") => {
+                let data = data.clone();
+                Box::new(req.into_body()
+                    .concat2()
+                    .map_err(|e| crate::Error::from(e))
+                    .and_then(move |str| {
+                        let body = try_future!(serde_json::from_slice(&str));
+                        let serv_data = data.data.write().expect("RwLock starvation !");
+                        data.updated.store(true, Ordering::Release);
+                        Box::new(future::ok(Response::builder()
+                            .status(200)
+                            .body(Body::from("{\"status\": \"success\"}"))
+                            .unwrap()))
+                    })
+                    // TODO: fix this to prevent panics
+                    .map_err(|e| hyper::Error::from(e)))
+			},
+			_ => {
+                Box::new(future::ok(Response::builder()
+                    .status(404)
+                    .body(Body::from("Wrong server, buddy !"))
+                    .unwrap()))
+
+            }
+		}
     }
 }
 
-fn tcp_server(conf: ServerConfig, data: ServerState) -> Result<(), crate::Error> {
+pub fn tcp_server(conf: ServerConfig, data: ServerState) -> Result<(), crate::Error> {
     let server = Server::bind(&std::net::SocketAddr::try_from(&conf.conn)?)
         .serve(move || service_fn(server_main(data.clone())))
         .map_err(|_|{});
@@ -153,8 +180,7 @@ fn send_to_dbus_server(conn: &dbus::ConnPath<&dbus::Connection>, serv_data: Serv
     Ok(())
 }
 
-pub fn run_web_server(config: ServerConfig) {
-    let data = utils::load_app_data("server_data.json").expect("Could not open the server_data.json file");
+pub fn run_web_server(config: ServerConfig, data: Arc<RwLock<ServerTree>>) {
     tcp_server(config, ServerState::new(data));
 }
 

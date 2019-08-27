@@ -6,7 +6,7 @@ use std::sync::mpsc;
 
 fn main() -> std::io::Result<()> {
     let conf = utils::load_app_data("client_config.json")?;
-    let data = Arc::new(Mutex::new(utils::load_app_data("data.json")?));
+    let data = Arc::new(Mutex::new(utils::load_app_data("client_data.json")?));
 
     let (tx, rx) = mpsc::channel();
     dbus_client::run_dbus(&data, rx);
