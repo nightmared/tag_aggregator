@@ -1,2 +1,2 @@
 [workspace]
-members = ["libtag-aggregator", "tag-aggregator-client", "tag-aggregator-server", "macro-hack"]
+members = ["libtag-aggregator", "tag-aggregator-client", "tag-aggregator-server"]

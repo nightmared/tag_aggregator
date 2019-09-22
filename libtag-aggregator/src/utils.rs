@@ -13,7 +13,7 @@ pub fn load_app_data<T: for <'a> Deserialize<'a>>(file_name: &str) -> std::io::R
 					.into_os_string()));
 	let mut config_file_path = Path::new(&config_base_dir).join("tag-aggregator/");
 	config_file_path.push(file_name);
-	// if you filename is not a valid utf-8 name, it's YOUR problem (like using a weird path and/or a
+	// if your filename is not a valid utf-8 name, it's YOUR problem (like using a weird path and/or a
 	// weird OS)
 	load_json(&config_file_path.to_string_lossy())
 }
